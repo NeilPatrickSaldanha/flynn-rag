@@ -1,0 +1,14 @@
+# Environment variables — never commit these
+.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# VS Code
+.vscode/
+
+# Streamlit
+.streamlit/
