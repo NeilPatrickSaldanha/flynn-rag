@@ -119,6 +119,32 @@ def ingest_all():
 
     print("Ingestion complete.")
 
+def ingest_single_pdf(file_path: str, filename: str):
+    """Ingest a single PDF file — used for runtime uploads from the UI."""
+    print(f"Ingesting: {filename}")
+
+    # Check if this filename already exists in Supabase
+    existing = supabase.table("documents") \
+        .select("id") \
+        .eq("metadata->>filename", filename) \
+        .limit(1) \
+        .execute()
+
+    if existing.data:
+        return False, f"{filename} has already been ingested. No duplicates added."
+
+    path = Path(file_path)
+
+    pages = extract_text_from_pdf(path)
+    if not pages:
+        return False, "Could not extract text from this PDF. It may be scanned or image-based."
+
+    chunks = chunk_pages(pages, filename)
+    chunks = embed_chunks(chunks)
+    store_chunks(chunks)
+
+    print(f"Ingested {len(chunks)} chunks from {filename}")
+    return True, len(chunks)
 
 if __name__ == "__main__":
     ingest_all()
