@@ -1,0 +1,19 @@
+To work on:-
+
+1. Support more than PDFs.
+2. What if the document updates, It should be live or it should be uploaded again but the other document should also be available in order for a user to compare differences between the current document and the previous one.
+3. The user should be able to look up for a document to see if the document was already uploaded.
+4. The user should not have the freedom to upload anything they want, that could increase the risk for prompt injection and get data from me.
+5. The answers should be formatted well, with the titles and the sub headings being bol or underlined or cursive when necessary and gaps appropriately.
+6. Once the answer is provided, the UI should drag to the start of the answer rather than the end line, which makes the user scroll up to start reading the answer
+7. I need a better name, "Flynn Tech Docs" is not it. "Construction Knowledge base" name should change too
+8. The Bot cannot answer 2 questions at time, we should give the ability to answer more than one question at time or if not possible, the bot should say "Sorry, only one question can be answered at a time" or something similar to it.
+9. When the sources are cited once the question is answered, instead of showing the sources more than once for each reference it takes, The sources tab should only show its source only once with all the referenced texts as sections INSIDE that specific document drop down.
+10. The document upload date and time should be added so the users know when was the document uploaded and in the source tab the bot should also mention the date and time of the document it took the source from in order to provide more clarity to the user.
+11. The user should be able to delete a document they would like to not have anymore.
+12. When the user hovers over any clickable element, the pointer should change from arrow to hand pointer as long as its hovering on that element.
+
+
+Notes:- 
+If I had to give this to someone will they have their own drop down with the documents or will they see all these documents that I have added?
+

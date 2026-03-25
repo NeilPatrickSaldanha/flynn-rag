@@ -1,0 +1,178 @@
+FIRE PROTECTION & EGRESS — FIELD REFERENCE GUIDE
+Flynn Group of Companies | Document No: FG-FP-FIELD-2024 | Rev 1.0 | March 2024
+================================================================================
+
+PURPOSE
+This field guide is a quick reference for Flynn site supervisors, foremen, and
+trade workers. It summarizes key fire protection and egress requirements from
+FG-FP-2024 for on-site use. Always refer to the full technical standard and
+project-specific drawings for complete requirements.
+
+--------------------------------------------------------------------------------
+SECTION 1 — FIRE RESISTANCE RATINGS AT A GLANCE
+--------------------------------------------------------------------------------
+
+EXTERIOR WALLS (non-combustible construction):
+  - Building height > 18 m, Group A/B occupancy:   2-hour minimum FRR
+  - Sprinklered building (with AHJ approval):       Rating may be reduced 1 step
+  - Curtain wall spandrel panels at floor lines:    1-hour minimum FRR
+  - Glazing in fire-rated assemblies:               Must be fire-rated glass (ULC listed)
+
+ROOF ASSEMBLIES (ASTM E108 / ULC-S107 classification required):
+  - Within 3 m of property line or adjacent structure:   Class A required
+  - Industrial occupancies, setback > 3 m:               Class B acceptable
+  - All other commercial projects (minimum):             Class C
+
+IMPORTANT: Verify FM Approvals listing number for all TPO, PVC, and modified
+bitumen assemblies before material submittal.
+
+--------------------------------------------------------------------------------
+SECTION 2 — FIRESTOPPING QUICK REFERENCE
+--------------------------------------------------------------------------------
+
+WHEN IS FIRESTOPPING REQUIRED?
+Every penetration through a fire-rated assembly must be firestopped, including:
+  - Mechanical, electrical, and plumbing penetrations
+  - Structural penetrations (bolts, anchors, hangers)
+  - Curtain wall-to-slab interface gaps (linear joints)
+
+CURTAIN WALL FLOOR LINE DETAILS:
+  - Install ULC-listed safing insulation (minimum 4 pcf density)
+  - Minimum depth: 4 inches (100 mm)
+  - Apply intumescent sealant at interior face
+  - F-rating must equal or exceed the floor assembly FRR
+
+DOCUMENTATION REQUIRED:
+  - Complete Form FG-FS-001 (Firestop Inspection Record) for EVERY location
+  - Photograph each installation before concealment
+  - Records must be retained for the life of the building
+
+COMMON FIELD MISTAKES TO AVOID:
+  1. Using the wrong firestop system for the penetrant type — always verify ULC listing
+  2. Insufficient safing depth — measure before closing up
+  3. Missing intumescent sealant at interior face
+  4. Not documenting locations — this creates liability at closeout
+  5. Firestopping after drywall is closed — schedule inspections proactively
+
+--------------------------------------------------------------------------------
+SECTION 3 — MEANS OF EGRESS REQUIREMENTS
+--------------------------------------------------------------------------------
+
+EXIT DOOR BASICS:
+  - Occupant load >= 50: Door must swing in direction of travel
+  - Occupant load >= 100 (assembly): Panic hardware (push bar) required
+  - Minimum clear width (single leaf): 810 mm
+  - Minimum clear width (accessible, double leaf): 1500 mm
+  - Hardware: Operable with single motion, no special knowledge required
+
+MAXIMUM TRAVEL DISTANCES TO EXIT:
+  Occupancy Group          | Unsprinklered | Sprinklered
+  -------------------------|---------------|------------
+  A — Assembly             | 45 m          | 60 m
+  B — Care / Detention     | 30 m          | 45 m
+  D/E — Business/Mercantile| 40 m          | 60 m
+  F — Industrial           | 45 m          | 75 m
+
+Note: Travel distance measured from most remote point in floor area to nearest
+exit door, along the natural path of egress travel.
+
+WHEN ARE TWO EXITS REQUIRED?
+  - Floor area > 60 m² AND occupant load > 60 persons (Group A)
+  - Floor area > 60 m² AND occupant load > 150 persons (Group B/D)
+  - Any floor area in a building > 18 m building height
+
+--------------------------------------------------------------------------------
+SECTION 4 — EMERGENCY LIGHTING & EXIT SIGNAGE
+--------------------------------------------------------------------------------
+
+EMERGENCY LIGHTING:
+  - Minimum illuminance: 10 lux at floor level along egress path
+  - Minimum duration: 30 minutes after power failure
+  - Power source: Battery backup (or generator with automatic transfer)
+
+EXIT SIGNS:
+  - Must be illuminated (internal or external light source)
+  - Minimum luminance: 50 candela/m²
+  - Battery backup: Minimum 30-minute operation
+
+PHOTOLUMINESCENT MARKINGS (high-rise buildings > 18 m):
+  - Required in all exit corridors and stairwells
+  - Installed at floor level
+  - Must meet CAN/ULC-S572
+
+TESTING REQUIREMENTS:
+  - Monthly test: 30 seconds (document on Form FG-EL-003)
+  - Annual test: 30 minutes full duration (document on Form FG-EL-003)
+
+--------------------------------------------------------------------------------
+SECTION 5 — SPRINKLER COORDINATION CHECKLIST
+--------------------------------------------------------------------------------
+
+Before Flynn work begins, confirm with sprinkler contractor:
+
+[ ] All concealed spaces > 800 mm depth have concealed-space sprinklers
+[ ] Sprinkler head locations documented and coordinated with insulation scope
+[ ] Floor-line sprinklers behind spandrel panels installed before panel installation
+[ ] Thermal barrier not compromised at sprinkler penetrations
+[ ] Minimum 0.07 MPa residual pressure confirmed at most remote head
+[ ] Hydraulic calculations reviewed and approved by AHJ
+
+--------------------------------------------------------------------------------
+SECTION 6 — SMOKE & HEAT DETECTOR COORDINATION
+--------------------------------------------------------------------------------
+
+SMOKE DETECTORS REQUIRED IN:
+  - All plenum spaces formed by Flynn curtain wall or ceiling systems
+  - Concealed cavity spaces (spacing per NBC 2020 and manufacturer listings)
+
+HEAT DETECTORS (instead of smoke) IN:
+  - Parking structures
+  - Loading dock areas
+  - Kitchen exhaust zones adjacent to building envelope penetrations
+
+BUILDING ENVELOPE CONTRACTOR RESPONSIBILITY:
+  - Provide rough-in conduit per electrical drawings in curtain wall framing
+  - Notify fire protection engineer of all plenum and concealed space locations
+  - Do not close concealed spaces until detector installation is confirmed complete
+
+--------------------------------------------------------------------------------
+SECTION 7 — INSPECTION FORMS QUICK REFERENCE
+--------------------------------------------------------------------------------
+
+  Form FG-FP-PRE-001    Pre-Installation Fire Protection Checklist
+                        Complete BEFORE work begins in fire-rated assemblies
+
+  Form FG-FS-001        Firestop Inspection Record
+                        Complete for EACH firestop location, with photo
+
+  Form FG-EL-003        Emergency Lighting & Exit Sign Test Log
+                        Monthly and annual testing records
+
+  Form FG-FP-POST-002   Post-Installation Compliance Declaration
+                        Signed by Flynn PM, submitted to GC at closeout
+
+  Form FG-FP-DEF-003    Deficiency Correction Record
+                        All deficiencies must be corrected within 5 business days
+
+--------------------------------------------------------------------------------
+SECTION 8 — FIELD EMERGENCY CONTACTS
+--------------------------------------------------------------------------------
+
+  Flynn Health & Safety Hotline:     1-800-FLY-SAFE (1-800-359-7233)
+  Flynn Emergency Response:          Contact your project superintendent
+  Local Fire Marshal (Ontario):      1-800-565-1842
+  Technical Standards & Safety Auth: 1-877-682-8772
+
+In the event of a fire during construction, activate the site fire alarm,
+evacuate all personnel, call 911, and contact your Flynn site superintendent
+immediately. Do not re-enter the structure until cleared by the fire department.
+
+--------------------------------------------------------------------------------
+
+DOCUMENT CONTROL
+This field guide is reviewed annually. Check with your project manager to
+confirm you have the current revision before use on any project.
+
+Flynn Group of Companies | North America's Leading Building Envelope Contractor
+www.flynncompanies.com | Toronto, ON
+================================================================================

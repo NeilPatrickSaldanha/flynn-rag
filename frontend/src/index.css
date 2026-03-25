@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+/* Markdown answer formatting */
+.md-answer h1, .md-answer h2, .md-answer h3 {
+  font-weight: 700;
+  margin-top: 1rem;
+  margin-bottom: 0.4rem;
+  color: #111827;
+}
+.md-answer h3 { font-size: 1rem; }
+.md-answer h2 { font-size: 1.1rem; }
+.md-answer p { margin-bottom: 0.6rem; line-height: 1.7; }
+.md-answer ul, .md-answer ol { padding-left: 1.4rem; margin-bottom: 0.6rem; }
+.md-answer li { margin-bottom: 0.25rem; line-height: 1.6; }
+.md-answer strong { font-weight: 700; color: #111827; }
+.md-answer code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }

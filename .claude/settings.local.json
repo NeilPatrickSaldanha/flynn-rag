@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(source venv/Scripts/activate)",
+      "Bash(uvicorn src.api:app --reload --port 8000)",
+      "Bash(npm run:*)",
+      "Bash(python -:*)",
+      "Bash(ls:*)",
+      "Bash(python -u -c \":*)",
+      "Bash(python -u src/api.py)",
+      "Bash(curl -s http://localhost:8000/documents -H \"X-Tenant-ID: default\")",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(uvicorn src.api:app --port 8000)",
+      "Bash(cd:*)",
+      "Bash(curl -s http://localhost:8000/)",
+      "Bash(curl:*)",
+      "Bash(netstat -ano)",
+      "Bash(xargs -I{} taskkill //F //PID {})",
+      "Bash(taskkill //F //PID 7972)",
+      "Bash(tasklist)",
+      "Bash(wmic process:*)",
+      "Bash(curl -s -X POST http://localhost:8000/query -H \"Content-Type: application/json\" -H \"X-Tenant-ID: default\" -d '{\"\"\"\"question\"\"\"\": \"\"\"\"What is the minimum TPO membrane thickness?\"\"\"\", \"\"\"\"history\"\"\"\": []}')",
+      "Bash(python3 -c \"import json,sys; r=json.load\\(sys.stdin\\); print\\(''''answer:'''', r[''''answer''''][:120]\\); print\\(''''sources:'''', len\\(r[''''sources'''']\\)\\)\")",
+      "Bash(python -m uvicorn --version)",
+      "Bash(python3 -m uvicorn --version)",
+      "Bash(pip show:*)",
+      "Bash(pip3 show:*)",
+      "Bash(venv/Scripts/uvicorn.exe src.api:app --host 0.0.0.0 --port 8000 --reload)"
+    ]
+  }
+}
