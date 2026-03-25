@@ -3,7 +3,7 @@ import axios from "axios";
 import ReactMarkdown from "react-markdown";
 
 
-const API = "http://localhost:8000";
+const API = "https://flynn-rag.onrender.com";
 
 interface Source {
   filename: string;
