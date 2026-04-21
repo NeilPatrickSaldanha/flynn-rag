@@ -3,7 +3,7 @@ import axios from "axios";
 import ReactMarkdown from "react-markdown";
 
 
-const API = "https://flynn-rag.onrender.com";
+const API = "http://localhost:8000";
 
 interface Source {
   filename: string;
@@ -271,15 +271,16 @@ export default function App() {
   const [docSearch, setDocSearch] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [versionModal, setVersionModal] = useState<{ filename: string; currentVersion: number; file: File } | null>(null);
-  const [tenantId, setTenantId] = useState("default");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(272);
+  const [lastSourceMap, setLastSourceMap] = useState<Record<number, { filename: string; page: number; content: string }>>({});
   const isDragging = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastAnswerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<any>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     fetchDocuments();
@@ -353,7 +354,7 @@ export default function App() {
   const fetchDocuments = async () => {
     try {
       const res = await axios.get(`${API}/documents`, {
-        headers: { "X-Tenant-ID": tenantId },
+        headers: { "X-Tenant-ID": "default" },
       });
       setDocuments(res.data.documents);
     } catch {
@@ -370,6 +371,30 @@ export default function App() {
       recognitionRef.current.start();
       setListening(true);
     }
+  };
+
+  // Checks if the query is asking about a specific [Source N] from the last response.
+  const isSourceReference = (query: string): { match: boolean; sourceIndex: number } => {
+    const patterns = [
+      /what\s+is\s+source\s+(\d+)/i,
+      /what\s+is\s+\[source\s+(\d+)\]/i,
+      /tell\s+me\s+more\s+about\s+source\s+(\d+)/i,
+      /where\s+did\s+source\s+(\d+)\s+come\s+from/i,
+      /what\s+does\s+source\s+(\d+)\s+say/i,
+      /explain\s+source\s+(\d+)/i,
+      /more\s+about\s+source\s+(\d+)/i,
+    ];
+    for (const pattern of patterns) {
+      const m = query.match(pattern);
+      if (m) return { match: true, sourceIndex: parseInt(m[1], 10) };
+    }
+    return { match: false, sourceIndex: 0 };
+  };
+
+  // Returns true if a string looks like an actual question.
+  const isQuestion = (s: string): boolean => {
+    if (s.includes("?")) return true;
+    return /^\s*(what|where|when|how|why|which|who|is|are|can|does)\b/i.test(s);
   };
 
   // Split a raw input into distinct questions when multi-question signals are present.
@@ -393,15 +418,15 @@ export default function App() {
     const sentenceSplit = trimmed
       .split(/(?<=\?)\s+/)
       .map((s) => s.trim())
-      .filter(Boolean);
+      .filter((s) => s && isQuestion(s));
 
     if (sentenceSplit.length > 1) return sentenceSplit;
 
-    // Fallback: split on conjunction keywords
+    // Fallback: split on conjunction keywords, keeping only actual questions
     const conjunctionSplit = trimmed
       .split(/\s*\b(also|as well as|additionally)\b\s*/i)
       .map((s) => s.trim())
-      .filter((s) => s && !/^(also|as well as|additionally)$/i.test(s));
+      .filter((s) => s && !/^(also|as well as|additionally)$/i.test(s) && isQuestion(s));
 
     if (conjunctionSplit.length > 1) return conjunctionSplit;
 
@@ -411,6 +436,25 @@ export default function App() {
   const sendQuery = async (question: string) => {
     if (!question.trim() || loading) return;
 
+    console.log("isSourceReference check:", isSourceReference(question));
+
+    // Check if the user is asking about a specific source from the last response
+    const sourceRef = isSourceReference(question);
+    if (sourceRef.match) {
+      const userMessage: Message = { role: "user", content: question };
+      const source = lastSourceMap[sourceRef.sourceIndex];
+      const assistantContent = source
+        ? `Source [${sourceRef.sourceIndex}] is from **${source.filename}**, Page ${source.page}:\n\n${source.content}`
+        : "I don't have that source reference from the previous response. Please re-ask your original question.";
+      setMessages((prev) => [
+        ...prev,
+        userMessage,
+        { role: "assistant", content: assistantContent },
+      ]);
+      setInput("");
+      return;
+    }
+
     const questions = splitQuestions(question);
 
     const userMessage: Message = { role: "user", content: question };
@@ -418,6 +462,10 @@ export default function App() {
     setMessages(baseMessages);
     setInput("");
     setLoading(true);
+
+    // Create a new abort controller for this request
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     // Build history from everything before the user's new message
     const history = messages.map((m) => ({ role: m.role, content: m.content }));
@@ -427,7 +475,8 @@ export default function App() {
       let accumulated = baseMessages;
       for (const q of questions) {
         const res = await axios.post(`${API}/query`, { question: q, history }, {
-          headers: { "X-Tenant-ID": tenantId },
+          headers: { "X-Tenant-ID": "default" },
+          signal: controller.signal,
         });
         console.log("Sources received:", res.data.sources);
         const assistantMessage: Message = {
@@ -438,11 +487,25 @@ export default function App() {
         };
         accumulated = [...accumulated, assistantMessage];
         setMessages([...accumulated]);
+        // Populate lastSourceMap from the response sources
+        const newSourceMap: Record<number, { filename: string; page: number; content: string }> = {};
+        for (const source of res.data.sources ?? []) {
+          newSourceMap[source.index] = {
+            filename: source.filename,
+            page: source.page,
+            content: source.content,
+          };
+        }
+        setLastSourceMap(newSourceMap);
         // Add each reply to history so later questions have context
         history.push({ role: "user", content: q });
         history.push({ role: "assistant", content: res.data.answer });
       }
-    } catch {
+    } catch (err: any) {
+      // Ignore aborted requests (user cleared the chat)
+      if (axios.isCancel(err) || err?.name === "CanceledError" || err?.code === "ERR_CANCELED") {
+        return;
+      }
       setMessages([
         ...baseMessages,
         { role: "assistant", content: "Something went wrong. Please try again." },
@@ -460,7 +523,7 @@ export default function App() {
     formData.append("force_new_version", forceNewVersion ? "true" : "false");
     try {
       const res = await axios.post(`${API}/upload`, formData, {
-        headers: { "X-Tenant-ID": tenantId },
+        headers: { "X-Tenant-ID": "default" },
         timeout: 120000,
       });
       setUploadMsg(`✅ ${res.data.message}`);
@@ -506,7 +569,7 @@ export default function App() {
   const handleDelete = async (filename: string) => {
     try {
       await axios.delete(`${API}/documents/${encodeURIComponent(filename)}`, {
-        headers: { "X-Tenant-ID": tenantId },
+        headers: { "X-Tenant-ID": "default" },
       });
       setConfirmDelete(null);
       fetchDocuments();
@@ -661,27 +724,17 @@ export default function App() {
           </div>
         </div>
 
-        {/* Workspace ID */}
-        <div className="px-4 py-3 border-t border-green-700">
-          <p className="text-green-300 text-xs font-semibold uppercase tracking-wider mb-2">
-            Workspace ID
-          </p>
-          <input
-            type="text"
-            value={tenantId}
-            onChange={(e) => setTenantId(e.target.value.trim() || "default")}
-            placeholder="default"
-            className="w-full bg-green-700 text-green-100 placeholder-green-400 text-xs px-3 py-1.5 rounded-lg outline-none focus:ring-1 focus:ring-green-400"
-          />
-          <p className="text-green-500 text-xs mt-1">
-            Isolates your documents and queries
-          </p>
-        </div>
-
-        {/* Clear chat */}
+{/* Clear chat */}
         <div className="px-4 py-3 border-t border-green-700">
           <button
-            onClick={() => setMessages([])}
+            onClick={() => {
+              if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+                abortControllerRef.current = null;
+              }
+              setMessages([]);
+              setLoading(false);
+            }}
             className="w-full text-xs text-green-300 hover:text-red-300 transition-colors py-1 cursor-pointer"
           >
             🗑️ Clear Chat

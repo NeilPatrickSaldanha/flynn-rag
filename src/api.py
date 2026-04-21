@@ -54,6 +54,7 @@ class QueryRequest(BaseModel):
     history: Optional[list[dict]] = []
 
 class SourceModel(BaseModel):
+    index: int
     filename: str
     page: int
     relevance: float
@@ -112,6 +113,7 @@ async def query(
 
         sources = [
             SourceModel(
+                index=i + 1,
                 filename=s["filename"],
                 page=s["page"],
                 relevance=s["relevance"],
@@ -120,7 +122,7 @@ async def query(
                 version=s.get("version", 1),
                 is_latest=s.get("is_latest", True),
             )
-            for s in result["sources"]
+            for i, s in enumerate(result["sources"])
         ]
 
         return QueryResponse(

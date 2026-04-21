@@ -25,7 +25,11 @@
       "Bash(python3 -m uvicorn --version)",
       "Bash(pip show:*)",
       "Bash(pip3 show:*)",
-      "Bash(venv/Scripts/uvicorn.exe src.api:app --host 0.0.0.0 --port 8000 --reload)"
+      "Bash(venv/Scripts/uvicorn.exe src.api:app --host 0.0.0.0 --port 8000 --reload)",
+      "Bash(echo \"Frontend PID: $!\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('TYPE:', d['query_type']\\); print\\('ANSWER:', d['answer'][:300]\\); print\\('SOURCES:', len\\(d['sources']\\)\\)\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('TYPE:', d['query_type']\\); print\\('ANSWER:', d['answer'][:200]\\)\")"
     ]
   }
 }

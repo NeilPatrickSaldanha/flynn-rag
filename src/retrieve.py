@@ -28,13 +28,15 @@ def embed_query(query: str) -> list[float]:
 def semantic_search(query_embedding: list[float], top_k: int = TOP_K, tenant_id: str = "default",
                      version_filter: str = "latest") -> list[dict]:
     """Find the most semantically similar chunks using cosine similarity."""
+    # Request extra results so we have enough after version filtering
+    fetch_count = top_k * 3
     print("  [DEBUG] calling match_documents RPC...")
     results = supabase.rpc(
         "match_documents",
         {
             "query_embedding": query_embedding,
-            "match_threshold": 0.2,
-            "match_count": top_k,
+            "match_threshold": 0.15,
+            "match_count": fetch_count,
             "tenant_id": tenant_id,
         }
     ).execute().data
@@ -45,7 +47,18 @@ def semantic_search(query_embedding: list[float], top_k: int = TOP_K, tenant_id:
         r.setdefault("version", 1)
         r.setdefault("is_latest", True)
 
-    return results
+    # Post-filter by version since the RPC doesn't support version filtering
+    if version_filter == "latest":
+        results = [r for r in results if r.get("is_latest", True)]
+    elif version_filter != "all":
+        try:
+            v = int(version_filter)
+            results = [r for r in results if r.get("version", 1) == v]
+        except (ValueError, TypeError):
+            results = [r for r in results if r.get("is_latest", True)]
+
+    print(f"  [DEBUG] after version filter: {len(results)} results")
+    return results[:top_k]
 
 
 # ── Step 3: Keyword search ─────────────────────────────────────────────────────
@@ -64,37 +77,51 @@ def _apply_version_filter(query_builder, version_filter):
 
 def keyword_search(query: str, top_k: int = TOP_K, tenant_id: str = "default",
                    version_filter: str = "latest") -> list[dict]:
-    """Find chunks whose content contains any significant word from the query."""
-    # Use individual words (length > 3) so partial matches work
-    words = [w.strip("?.,!\"'") for w in query.split() if len(w.strip("?.,!\"'")) > 3]
+    """Find chunks whose content contains query keywords, ranked by match count.
+    Searches ALL words and scores each chunk by how many distinct keywords it
+    matches — chunks matching more keywords rank higher."""
+    words = list({w.strip("?.,!\"'").lower() for w in query.split()
+                  if len(w.strip("?.,!\"'")) > 3})
     if not words:
         return []
 
-    seen_ids: set = set()
-    results: list[dict] = []
+    # Sort by length descending — longer/rarer words are more distinctive
+    words.sort(key=len, reverse=True)
+
+    chunk_scores: dict[str, dict] = {}  # id → {row, score}
 
     for word in words:
-        rows = supabase.table("documents") \
-            .select("id, content, metadata") \
+        q = supabase.table("documents") \
+            .select("id, content, metadata, version, is_latest") \
             .eq("tenant_id", tenant_id) \
             .ilike("content", f"%{word}%") \
-            .limit(top_k) \
-            .execute()
+            .limit(top_k * 3)
+        q = _apply_version_filter(q, version_filter)
+        rows = q.execute()
+
         for row in rows.data:
-            if row["id"] not in seen_ids:
+            rid = row["id"]
+            if rid in chunk_scores:
+                chunk_scores[rid]["score"] += 1
+            else:
                 row.setdefault("version", 1)
                 row.setdefault("is_latest", True)
-                seen_ids.add(row["id"])
-                results.append(row)
-        if len(results) >= top_k:
-            break
+                chunk_scores[rid] = {"row": row, "score": 1}
 
-    return results[:top_k]
+    # Sort by keyword match count — more matches = more relevant
+    ranked = sorted(chunk_scores.values(), key=lambda x: x["score"], reverse=True)
+    print(f"  [KEYWORD] {len(chunk_scores)} unique chunks found, top scores: {[r['score'] for r in ranked[:5]]}")
+    return [item["row"] for item in ranked[:top_k]]
 
 
 # ── Step 4: Dynamic alias map ──────────────────────────────────────────────────
 FILENAME_STOPWORDS = {"the", "and", "of", "a", "an", "in", "for", "to",
-                      "with", "by", "is", "it", "be", "as", "at", "or", "on"}
+                      "with", "by", "is", "it", "be", "as", "at", "or", "on",
+                      # Construction-generic terms that appear in many document names
+                      "manual", "guide", "specification", "specifications", "spec",
+                      "standard", "standards", "requirements", "requirement",
+                      "installation", "document", "report", "sheet", "data",
+                      "technical", "general", "product", "system", "systems"}
 
 def build_alias_map(tenant_id: str) -> dict:
     """Fetch all registered filenames and build alias → [filename] lookup.
@@ -169,11 +196,12 @@ def filename_search(query: str, top_k: int = TOP_K, tenant_id: str = "default",
     # Fetch ALL chunks for each matched file — no limit, so summarization
     # queries get every page of the document
     for filename in matched_filenames:
-        rows = supabase.table("documents") \
-            .select("id, content, metadata") \
+        q = supabase.table("documents") \
+            .select("id, content, metadata, version, is_latest") \
             .eq("tenant_id", tenant_id) \
-            .eq("metadata->>filename", filename) \
-            .execute()
+            .eq("metadata->>filename", filename)
+        q = _apply_version_filter(q, version_filter)
+        rows = q.execute()
         for row in rows.data:
             if row["id"] not in seen_ids:
                 row.setdefault("version", 1)
@@ -189,14 +217,18 @@ def hybrid_search(query: str, top_k: int = TOP_K, tenant_id: str = "default",
                   original_query: str = None, version_filter: str = "latest") -> dict:
     """Run semantic, keyword, and filename search — merge and deduplicate.
     Returns {"chunks": [...], "target_filename": str | None}."""
+    # Always retrieve enough candidates for the reranker — top_k controls
+    # final output, but initial retrieval needs a wider net
+    retrieval_k = max(top_k, 10)
+
     query_embedding = embed_query(query)
 
-    semantic_results = semantic_search(query_embedding, top_k, tenant_id, version_filter=version_filter)
-    keyword_results = keyword_search(query, top_k, tenant_id, version_filter=version_filter)
+    semantic_results = semantic_search(query_embedding, retrieval_k, tenant_id, version_filter=version_filter)
+    keyword_results = keyword_search(query, retrieval_k, tenant_id, version_filter=version_filter)
 
     # Always run filename search against the original user query — doc references
     # like "doc5" or "doc 5" must not be lost to LLM rewriting
-    filename_results = filename_search(original_query or query, top_k, tenant_id,
+    filename_results = filename_search(original_query or query, retrieval_k, tenant_id,
                                         version_filter=version_filter)
 
     # If filename search matched exactly one document, expose it as the target
@@ -229,7 +261,7 @@ def hybrid_search(query: str, top_k: int = TOP_K, tenant_id: str = "default",
     # plus top_k from other sources — ensures full document coverage
     if filename_results:
         return {"chunks": combined, "target_filename": target_filename}
-    return {"chunks": combined[:top_k + 3], "target_filename": None}
+    return {"chunks": combined[:retrieval_k + 5], "target_filename": None}
 
 
 # ── Test retrieval ─────────────────────────────────────────────────────────────

@@ -125,7 +125,7 @@ def assemble_context(chunks: list[dict]) -> str:
 
 
 # ── Step 4: Generate answer ────────────────────────────────────────────────────
-def generate_answer(query: str, context: str, query_type: str, history: list[dict]) -> str:
+def generate_answer(query: str, context: str, query_type: str, history: list[dict], format_instruction: str = "") -> str:
     type_instructions = {
         "lookup": "Provide a direct, precise answer. Lead with the specific value or requirement.",
         "comparison": "Structure your answer as a clear comparison. Use the sources to contrast the options.",
@@ -135,12 +135,24 @@ def generate_answer(query: str, context: str, query_type: str, history: list[dic
 
     instruction = type_instructions.get(query_type, type_instructions["lookup"])
 
+    # If the user gave an explicit formatting directive, it overrides the default
+    format_block = ""
+    if format_instruction:
+        format_block = f"""
+
+CRITICAL USER REQUEST — The user has specifically asked you to: {format_instruction}
+You MUST follow this instruction exactly. It overrides the default response style above."""
+
     system_prompt = f"""You are a construction industry technical assistant specializing in \
 commercial roofing, glazing, curtain walls, and building envelope systems.
 
 For technical questions, answer using ONLY the provided source documents. You MUST include [Source N] citation markers inline (e.g. [Source 1], [Source 2]) every time you use information from a document.
 For casual or conversational messages (greetings, thank-yous, off-topic questions), respond naturally and briefly — do not cite sources or reference documents.
-If a technical question is not covered in the provided sources, say so clearly — do not fabricate.
+
+IMPORTANT — follow these fallback rules in strict priority order:
+1. If the question IS about construction/building but the provided sources do not contain relevant information, respond with: "I couldn't find information about this topic in your uploaded documents. Try uploading a document that covers this topic, or rephrase your question." Do NOT use the domain restriction message for this case.
+2. If the question is clearly and completely unrelated to construction or building systems (e.g. cooking, sports, politics), respond with: "I can only assist with construction and building industry topics."
+3. Never fabricate information. If the sources don't cover it, say so — do not guess.
 
 Format technical responses using Markdown:
 - Use **bold** for key terms, specifications, and critical values
@@ -148,9 +160,7 @@ Format technical responses using Markdown:
 - Use bullet points or numbered lists for requirements, steps, or comparisons
 - Leave a blank line between sections for readability
 
-You are a construction industry knowledge assistant. You only answer questions related to construction, building codes, roofing, glazing, curtain walls, fire protection, safety standards, and related technical topics. If a question is unrelated to these topics, respond with: 'I can only assist with construction and building industry topics. Please ask a question related to roofing, glazing, building codes, or similar subjects.' Do not answer personal questions, general knowledge questions, or anything outside the construction domain.
-
-{instruction}"""
+{instruction}{format_block}"""
 
     # Build messages with history
     messages = [{"role": "system", "content": system_prompt}]
@@ -204,9 +214,14 @@ def answer_query(query: str, history: list[dict] = None, tenant_id: str = "defau
 
 def _answer_query_inner(query: str, history: list[dict], tenant_id: str) -> dict:
 
-    # Rewrite query if it's a follow-up
-    standalone_query = rewrite_query_with_history(query, history)
-    if standalone_query != query:
+    # Preprocess first — strip fillers/normalize acronyms before history rewriting
+    # so the history rewriter receives clean input
+    from query_understanding import preprocess_query as _preprocess
+    preprocessed_query = _preprocess(query)["clean_query"]
+
+    # Rewrite query if it's a follow-up (using cleaned query)
+    standalone_query = rewrite_query_with_history(preprocessed_query, history)
+    if standalone_query != preprocessed_query:
         print(f"  Rewritten: {standalone_query}")
 
     # Classify and rewrite for retrieval
@@ -215,6 +230,8 @@ def _answer_query_inner(query: str, history: list[dict], tenant_id: str) -> dict
     rewritten = query_info["rewritten_query"]
     top_k = query_info["top_k"]
     version_intent = query_info.get("version_intent", "latest")
+    format_instruction = query_info.get("format_instruction", "")
+    clean_query = query_info.get("clean_query", standalone_query)
 
     # Map version_intent to version_filter for hybrid_search
     if version_intent == "latest":
@@ -226,11 +243,11 @@ def _answer_query_inner(query: str, history: list[dict], tenant_id: str) -> dict
 
     print(f"  Type: {query_type} | Top K: {top_k} | Version: {version_intent}")
 
-    # Retrieve — always pass the original standalone query too so filename_search
-    # can match short names like "doc7" that get expanded away in the rewrite
-    print(f"  [PIPE] calling hybrid_search(query='{rewritten}', original_query='{query}', top_k={top_k}, version_filter='{version_filter}')")
+    # Retrieve — pass clean_query so filename_search can match short names
+    # like "doc7" without noise from format instructions
+    print(f"  [PIPE] calling hybrid_search(query='{rewritten}', original_query='{clean_query}', top_k={top_k}, version_filter='{version_filter}')")
     search_result = hybrid_search(rewritten, top_k=top_k, tenant_id=tenant_id,
-                                  original_query=query, version_filter=version_filter)
+                                  original_query=clean_query, version_filter=version_filter)
     chunks = search_result["chunks"]
     target_filename = search_result["target_filename"]
     print(f"  Retrieved {len(chunks)} chunks, target_filename={target_filename}")
@@ -247,9 +264,9 @@ def _answer_query_inner(query: str, history: list[dict], tenant_id: str) -> dict
         chunks = chunks[:RERANK_CAP]
         print(f"  [PIPE] capped to {RERANK_CAP} chunks before reranking")
 
-    # Rerank — include the original query so the scorer knows the user
-    # explicitly asked for a specific document (e.g. "doc6")
-    rerank_query = f"{query} | {rewritten}" if query != rewritten else rewritten
+    # Rerank — use clean_query (not raw query) so format instructions don't
+    # pollute relevance scoring; include rewritten query for expanded context
+    rerank_query = f"{clean_query} | {rewritten}" if clean_query != rewritten else rewritten
     print(f"  [PIPE] reranking with: '{rerank_query}'")
 
     # Single-doc summarization: keep ALL chunks — the user wants the full document
@@ -271,18 +288,33 @@ def _answer_query_inner(query: str, history: list[dict], tenant_id: str) -> dict
     if not ranked_chunks and version_filter == "latest":
         print("  [PIPE] no results from latest — retrying with version_filter='all'")
         search_result = hybrid_search(rewritten, top_k=top_k, tenant_id=tenant_id,
-                                      original_query=query, version_filter="all")
+                                      original_query=clean_query, version_filter="all")
         chunks = search_result["chunks"]
-        rerank_query = f"{query} | {rewritten}" if query != rewritten else rewritten
+        rerank_query = f"{clean_query} | {rewritten}" if clean_query != rewritten else rewritten
         ranked_chunks = rerank_chunks(chunks, rerank_query)
         used_fallback = bool(ranked_chunks)
         print(f"  [PIPE] fallback rerank: {len(ranked_chunks)} chunks kept")
+
+    # Guard: if no chunks survived retrieval + reranking, return an honest
+    # "not in your documents" message instead of sending GPT-4o an empty context
+    # (which causes it to misfire the domain guardrail).
+    if not ranked_chunks:
+        print("  [PIPE] no chunks found — returning 'not in documents' message")
+        return {
+            "query": query,
+            "query_type": query_type,
+            "answer": (
+                "I couldn't find information about this topic in your uploaded documents. "
+                "Try uploading a document that covers this topic, or rephrase your question."
+            ),
+            "sources": [],
+        }
 
     # Assemble context
     context = assemble_context(ranked_chunks)
 
     # Generate with history
-    answer = generate_answer(query, context, query_type, history)
+    answer = generate_answer(clean_query, context, query_type, history, format_instruction)
 
     # Check if any returned chunks come from older versions and append warning
     old_version_files = {c["metadata"]["filename"] for c in ranked_chunks if not c.get("is_latest", True)}
