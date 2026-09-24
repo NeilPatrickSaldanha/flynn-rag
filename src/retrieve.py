@@ -35,7 +35,7 @@ def semantic_search(query_embedding: list[float], top_k: int = TOP_K, tenant_id:
         "match_documents",
         {
             "query_embedding": query_embedding,
-            "match_threshold": 0.15,
+            "match_threshold": 0.10,
             "match_count": fetch_count,
             "tenant_id": tenant_id,
         }
@@ -146,8 +146,16 @@ def build_alias_map(tenant_id: str) -> dict:
     return alias_map
 
 
-def match_filenames_from_query(query: str, alias_map: dict) -> list:
-    """Return filenames explicitly referenced in the query via alias matching."""
+def match_filenames_from_query(query: str, alias_map: dict) -> tuple:
+    """Return (filenames explicitly referenced in the query, is_specific_match).
+    Multi-token signals (bigrams, "document N") are more specific than a lone
+    generic word (e.g. "test" matching several unrelated "qa_test_*" docs), so
+    they take priority — a specific match like "test3" shouldn't be diluted by
+    weaker single-word matches on documents that just share a common fragment.
+    is_specific_match tells callers whether the match came from one of these
+    high-confidence multi-token signals (True) or the generic single-word
+    fallback (False) — needed to tell "this document" apart from "documents
+    that happen to share a word with the query"."""
     raw_words = [w.strip("?.,!\"'").lower() for w in query.split()]
     matched = []
     seen = set()
@@ -157,10 +165,6 @@ def match_filenames_from_query(query: str, alias_map: dict) -> list:
             if fn not in seen:
                 matched.append(fn)
                 seen.add(fn)
-
-    for w in raw_words:
-        if w in alias_map:
-            _add(alias_map[w])
 
     # bigrams: "doc 5" → "doc5", "curtain wall" → "curtainwall"
     for i in range(len(raw_words) - 1):
@@ -175,20 +179,41 @@ def match_filenames_from_query(query: str, alias_map: dict) -> list:
             if docn in alias_map:
                 _add(alias_map[docn])
 
-    return matched
+    # A specific multi-token match is confident enough on its own — don't dilute
+    # it with weaker single-word matches on unrelated documents.
+    if matched:
+        return matched, True
+
+    # Single-word matches: prefer the INTERSECTION across every matched word
+    # over the union — e.g. "TPO" alone matches two files, but "TPO" AND
+    # "datasheet" together only agree on one, which is a much stronger signal
+    # than either word alone. Only fall back to the looser union (matches any
+    # one word) when no single document is consistent with every matched word.
+    word_match_sets = [set(alias_map[w]) for w in raw_words if w in alias_map]
+    if word_match_sets:
+        intersection = set.intersection(*word_match_sets)
+        if len(intersection) == 1:
+            return list(intersection), True
+
+    for w in raw_words:
+        if w in alias_map:
+            _add(alias_map[w])
+
+    return matched, False
 
 
 # ── Step 5: Filename search ────────────────────────────────────────────────────
 def filename_search(query: str, top_k: int = TOP_K, tenant_id: str = "default",
-                     version_filter: str = "latest") -> list[dict]:
+                     version_filter: str = "latest") -> tuple:
     """Retrieve chunks from all documents explicitly referenced in the query.
-    Works for any uploaded document dynamically — reads aliases from Supabase."""
+    Works for any uploaded document dynamically — reads aliases from Supabase.
+    Returns (chunks, is_specific_match)."""
     alias_map = build_alias_map(tenant_id)
-    matched_filenames = match_filenames_from_query(query, alias_map)
-    print(f"  [FILENAME] matched: {matched_filenames}")
+    matched_filenames, is_specific_match = match_filenames_from_query(query, alias_map)
+    print(f"  [FILENAME] matched: {matched_filenames} (specific={is_specific_match})")
 
     if not matched_filenames:
-        return []
+        return [], is_specific_match
 
     seen_ids: set = set()
     results: list[dict] = []
@@ -209,17 +234,17 @@ def filename_search(query: str, top_k: int = TOP_K, tenant_id: str = "default",
                 seen_ids.add(row["id"])
                 results.append(row)
 
-    return results
+    return results, is_specific_match
 
 
 # ── Step 6: Combine and deduplicate results ────────────────────────────────────
 def hybrid_search(query: str, top_k: int = TOP_K, tenant_id: str = "default",
                   original_query: str = None, version_filter: str = "latest") -> dict:
     """Run semantic, keyword, and filename search — merge and deduplicate.
-    Returns {"chunks": [...], "target_filename": str | None}."""
+    Returns {"chunks": [...], "target_filename": str | None, "filename_match_specific": bool}."""
     # Always retrieve enough candidates for the reranker — top_k controls
     # final output, but initial retrieval needs a wider net
-    retrieval_k = max(top_k, 10)
+    retrieval_k = max(top_k * 2, 15)
 
     query_embedding = embed_query(query)
 
@@ -228,7 +253,7 @@ def hybrid_search(query: str, top_k: int = TOP_K, tenant_id: str = "default",
 
     # Always run filename search against the original user query — doc references
     # like "doc5" or "doc 5" must not be lost to LLM rewriting
-    filename_results = filename_search(original_query or query, retrieval_k, tenant_id,
+    filename_results, filename_match_specific = filename_search(original_query or query, retrieval_k, tenant_id,
                                         version_filter=version_filter)
 
     # If filename search matched exactly one document, expose it as the target
@@ -260,8 +285,10 @@ def hybrid_search(query: str, top_k: int = TOP_K, tenant_id: str = "default",
     # When filename search matched specific docs, return all filename chunks
     # plus top_k from other sources — ensures full document coverage
     if filename_results:
-        return {"chunks": combined, "target_filename": target_filename}
-    return {"chunks": combined[:retrieval_k + 5], "target_filename": None}
+        return {"chunks": combined, "target_filename": target_filename,
+                "filename_match_specific": filename_match_specific}
+    return {"chunks": combined[:retrieval_k + 5], "target_filename": None,
+            "filename_match_specific": False}
 
 
 # ── Test retrieval ─────────────────────────────────────────────────────────────

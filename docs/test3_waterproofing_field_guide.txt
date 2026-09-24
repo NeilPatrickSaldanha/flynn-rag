@@ -1,0 +1,97 @@
+WATERPROOFING SYSTEMS — FIELD REFERENCE GUIDE
+Flynn Group of Companies | Doc No: FG-WP-FIELD-2024 | Rev 1.0
+=================================================================
+
+PURPOSE
+Quick reference for site supervisors and applicators on waterproofing
+installation requirements for below-grade and plaza deck applications.
+
+=================================================================
+SECTION 1 — BELOW-GRADE WATERPROOFING
+=================================================================
+
+APPROVED MEMBRANE TYPES:
+- Modified bitumen sheet membrane (SBS or APP)
+  Standard: ASTM D6135 / CAN/CGSB 37.54
+  Minimum thickness: 3.0 mm (self-adhered), 4.0 mm (torch-applied)
+
+- Sheet-applied HDPE membrane
+  Standard: ASTM D7408
+  Minimum thickness: 1.0 mm
+
+- Fluid-applied polyurethane membrane
+  Standard: ASTM C836
+  Minimum DFT (dry film thickness): 60 mils (1.5 mm)
+
+SUBSTRATE REQUIREMENTS:
+- Concrete must be cured minimum 28 days before membrane application
+- Surface must be smooth, free of voids, fins, and sharp protrusions
+- Moisture content: maximum 75% RH (test per ASTM F2170)
+- Surface profile: CSP 3 minimum for fluid-applied systems
+- All form tie holes and voids must be filled with non-shrink grout
+  and allowed to cure before membrane application
+
+APPLICATION CONDITIONS:
+- Minimum ambient temperature: 5°C and rising
+- Maximum ambient temperature: 35°C
+- Do not apply in rain, snow, or when rain is forecast within 4 hours
+- Protect freshly applied membrane from rain for minimum 24 hours
+
+PROTECTION BOARD:
+- Install protection board immediately after membrane inspection sign-off
+- Minimum: 25 mm extruded polystyrene (XPS) or approved dimple mat
+- Overlap joints minimum 100 mm, stagger vertical and horizontal joints
+- Do not allow traffic on membrane without protection board in place
+
+=================================================================
+SECTION 2 — PLAZA DECK WATERPROOFING
+=================================================================
+
+SYSTEM REQUIREMENTS:
+All plaza deck waterproofing assemblies must achieve minimum 10-year
+NDL warranty and comply with NRCA Plaza Deck Guidelines.
+
+ASSEMBLY (bottom to top):
+1. Structural slab — slope minimum 1.5% to drains
+2. Primer coat — as required by membrane manufacturer
+3. Waterproofing membrane — minimum 60 mil fluid-applied or
+   approved sheet membrane
+4. Protection course — 50 mm XPS insulation
+5. Filter fabric — minimum 150 g/m2 non-woven geotextile
+6. Drainage layer — minimum 25 mm dimple mat or gravel
+7. Growing medium / pavers / ballast (as designed)
+
+DRAIN INSTALLATION:
+- Install clamping ring drains per manufacturer instructions
+- Membrane must be fully bonded to clamping flange — no gaps
+- Install secondary overflow drain at 50 mm above primary drain rim
+- Test all drains with water before protection course is installed
+- Document drain locations on as-built drawings
+
+COMMON DEFICIENCIES TO AVOID:
+1. Insufficient slope to drains — check with level before waterproofing
+2. Membrane not carried up parapet walls minimum 200 mm above finish
+3. Unclamped or improperly flashed drain penetrations
+4. Protection board installed before membrane inspection
+5. Traffic on unprotected membrane — causes punctures
+
+=================================================================
+SECTION 3 — INSPECTION & DOCUMENTATION
+=================================================================
+
+REQUIRED FORMS:
+  FG-WP-PRE-001    Pre-application inspection checklist
+  FG-WP-DFT-001    Dry film thickness log (fluid-applied only)
+  FG-WP-TEST-001   Flood test / ELD test results
+  FG-WP-POST-001   Post-installation sign-off
+
+FLOOD TESTING:
+- Flood test: pond minimum 25 mm of water for 24 hours
+- Electronic Leak Detection (ELD): required for all systems
+  exceeding 500 m2 and all rooftop planters
+- Record all test results including weather conditions
+
+CONTACT:
+Flynn Technical Services: technical@flynncompanies.com
+Flynn H&S Hotline: 1-800-FLY-SAFE
+=================================================================

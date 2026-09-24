@@ -29,7 +29,23 @@
       "Bash(echo \"Frontend PID: $!\")",
       "Bash(python3 -m json.tool)",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('TYPE:', d['query_type']\\); print\\('ANSWER:', d['answer'][:300]\\); print\\('SOURCES:', len\\(d['sources']\\)\\)\")",
-      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('TYPE:', d['query_type']\\); print\\('ANSWER:', d['answer'][:200]\\)\")"
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('TYPE:', d['query_type']\\); print\\('ANSWER:', d['answer'][:200]\\)\")",
+      "Skill(run)",
+      "Bash(npm run *)",
+      "Bash(disown)",
+      "Bash(echo \"frontend PID: $!\")",
+      "Bash(mkdir -p /private/tmp/claude-501/-Users-neilpatricksaldanha-flynn-rag/92c00e01-4bf5-41c3-9c80-560dc980e717/scratchpad)",
+      "Bash(nslookup jpvtyiqdqztsrnubvnjg.supabase.co)",
+      "Bash(ping -c 1 8.8.8.8)",
+      "Bash(nslookup supabase.co)",
+      "Skill(schedule)",
+      "Bash(find / -maxdepth 6 -iname \"*neil-voice*\")",
+      "Read(//Users/neilpatricksaldanha/.claude/**)",
+      "Bash(gh repo *)",
+      "Bash(uuidgen)",
+      "Bash(git fetch *)",
+      "Bash(ps -p 16636 -o pid,lstart,command)",
+      "Bash(kill 16636)"
     ]
   }
 }

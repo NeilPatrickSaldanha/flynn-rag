@@ -19,7 +19,7 @@ from security import scan_for_injection
 load_dotenv()
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
-app = FastAPI(title="Flynn DocuMind API")
+app = FastAPI(title="Flynn FlinMind API")
 
 # ── Guarantee CORS header on every response, including unhandled 500s ─────────
 # CORSMiddleware alone misses exceptions caught by ServerErrorMiddleware (the
@@ -91,7 +91,32 @@ async def generic_exception_handler(request: Request, exc: Exception):
 # ── Routes ─────────────────────────────────────────────────────────────────────
 @app.get("/")
 def health_check():
-    return {"status": "ok", "service": "Flynn DocuMind"}
+    return {"status": "ok", "service": "Flynn FlinMind"}
+
+
+class FormatSourceRequest(BaseModel):
+    content: str
+
+
+@app.post("/format-source")
+async def format_source(request: FormatSourceRequest):
+    """Format a raw document excerpt using OpenAI."""
+    from generate import openai_client
+
+    system_prompt = """You are a helpful assistant. Format the following raw construction document excerpt into clean, readable markdown. If it contains table data, format it as a proper markdown table with | separators. If it contains a list, format it as bullet points. Preserve all technical values exactly. Do not add or remove any information."""
+
+    response = openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Format this excerpt:\n\n{request.content}"}
+        ],
+        temperature=0,
+        max_tokens=500
+    )
+
+    formatted = response.choices[0].message.content
+    return {"formatted": formatted}
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -168,6 +193,7 @@ MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
 MAGIC_BYTES: dict[str, bytes] = {
     ".pdf":  b"%PDF-",
     ".docx": b"PK\x03\x04",  # DOCX is a ZIP archive
+    ".xlsx": b"PK\x03\x04",  # XLSX is also a ZIP archive
     ".txt":  b"",             # No magic bytes for plain text
 }
 
@@ -175,6 +201,7 @@ MAGIC_BYTES: dict[str, bytes] = {
 EXPECTED_MIME: dict[str, str] = {
     ".pdf":  "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".txt":  "text/plain",
 }
 

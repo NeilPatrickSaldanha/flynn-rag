@@ -124,7 +124,7 @@ function DocumentSourceGroup({ filename, passages }: { filename: string; passage
 // ── Share bar ──────────────────────────────────────────────────────────────────
 function ShareBar({ question, answer }: { question: string; answer: string }) {
   const [copied, setCopied] = useState(false);
-  const shareText = `Q: ${question}\n\nA: ${answer}\n\nPowered by DocuMind`;
+  const shareText = `Q: ${question}\n\nA: ${answer}\n\nPowered by FlinMind`;
   const encoded = encodeURIComponent(shareText);
 
   const handleCopy = () => {
@@ -147,7 +147,7 @@ function ShareBar({ question, answer }: { question: string; answer: string }) {
         {"📱"}
       </a>
       <a
-        href={`mailto:?subject=DocuMind Answer&body=${encoded}`}
+        href={`mailto:?subject=FlinMind Answer&body=${encoded}`}
         target="_blank"
         rel="noreferrer"
         className="text-lg hover:scale-110 transition-transform cursor-pointer"
@@ -212,7 +212,7 @@ function MessageBubble({
             <line x1="26" y1="37" x2="32" y2="46" stroke="#52B788" strokeWidth="0.8" strokeDasharray="2,2"/>
             <line x1="32" y1="46" x2="22" y2="55" stroke="#52B788" strokeWidth="0.8" strokeDasharray="2,2"/>
           </svg>
-          <span className="text-green-700 text-xs font-semibold uppercase tracking-wider">DocuMind</span>
+          <span className="text-green-700 text-xs font-semibold uppercase tracking-wider">FlinMind</span>
           {message.query_type && (
             <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full border border-gray-200">
               {message.query_type}
@@ -239,7 +239,7 @@ function MessageBubble({
             </ReactMarkdown>
           </div>
 
-          {Object.keys(groupedSources).length > 0 && message.content.includes("[Source") && (
+          {Object.keys(groupedSources).length > 0 && (
             <div className="mt-4">
               <p className="text-gray-400 text-xs uppercase tracking-wider mb-2 font-semibold">
                 Sources
@@ -274,6 +274,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(272);
   const [lastSourceMap, setLastSourceMap] = useState<Record<number, { filename: string; page: number; content: string }>>({});
+  const [formattingSource, setFormattingSource] = useState(false);
   const isDragging = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastAnswerRef = useRef<HTMLDivElement>(null);
@@ -292,12 +293,18 @@ export default function App() {
 
     if (SpeechRecognition) {
       const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = false;
+      recognition.continuous = true;
+      recognition.interimResults = true;
       recognition.lang = "en-US";
       recognition.onresult = (event: any) => {
-        setInput(event.results[0][0].transcript);
-        setListening(false);
+        // Get the final transcript and replace the entire input value
+        let finalTranscript = "";
+        for (let i = 0; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript + " ";
+          }
+        }
+        setInput(finalTranscript.trim());
       };
       recognition.onerror = () => setListening(false);
       recognition.onend = () => setListening(false);
@@ -391,6 +398,13 @@ export default function App() {
     return { match: false, sourceIndex: 0 };
   };
 
+  // Note: general "what source/reference did you use" follow-ups (no specific
+  // number) are handled server-side now — the classifier recognizes them as a
+  // "source_reference" query type via actual language understanding, which
+  // generalizes to any phrasing instead of needing a regex per wording. See
+  // query_understanding.py's classify_query and generate.py's handling of
+  // query_type == "source_reference".
+
   // Returns true if a string looks like an actual question.
   const isQuestion = (s: string): boolean => {
     if (s.includes("?")) return true;
@@ -443,15 +457,45 @@ export default function App() {
     if (sourceRef.match) {
       const userMessage: Message = { role: "user", content: question };
       const source = lastSourceMap[sourceRef.sourceIndex];
-      const assistantContent = source
-        ? `Source [${sourceRef.sourceIndex}] is from **${source.filename}**, Page ${source.page}:\n\n${source.content}`
-        : "I don't have that source reference from the previous response. Please re-ask your original question.";
-      setMessages((prev) => [
-        ...prev,
-        userMessage,
-        { role: "assistant", content: assistantContent },
-      ]);
+      
+      if (!source) {
+        setMessages((prev) => [
+          ...prev,
+          userMessage,
+          { role: "assistant", content: "I don't have that source reference from the previous response. Please re-ask your original question." },
+        ]);
+        setInput("");
+        return;
+      }
+
+      // Format the source content using the backend API
+      setFormattingSource(true);
+      setMessages((prev) => [...prev, userMessage]);
       setInput("");
+
+      try {
+        const response = await axios.post(
+          `${API}/format-source`,
+          { content: source.content },
+          { headers: { "X-Tenant-ID": "default" } }
+        );
+
+        const formattedContent = response.data.formatted;
+        const assistantContent = `Source [${sourceRef.sourceIndex}] is from **${source.filename}**, Page ${source.page}:\n\n${formattedContent}`;
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: assistantContent }
+        ]);
+      } catch (error) {
+        // Fallback to raw content if formatting fails
+        const assistantContent = `Source [${sourceRef.sourceIndex}] is from **${source.filename}**, Page ${source.page}:\n\n${source.content}`;
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: assistantContent }
+        ]);
+      } finally {
+        setFormattingSource(false);
+      }
       return;
     }
 
@@ -468,7 +512,9 @@ export default function App() {
     abortControllerRef.current = controller;
 
     // Build history from everything before the user's new message
-    const history = messages.map((m) => ({ role: m.role, content: m.content }));
+    // Include sources so the backend can answer "what did you use" follow-ups
+    // (query_type "source_reference") from the previous turn's actual citations.
+    const history = messages.map((m) => ({ role: m.role, content: m.content, sources: m.sources }));
 
     try {
       // Send each question sequentially; accumulate assistant replies after the user bubble
@@ -498,8 +544,8 @@ export default function App() {
         }
         setLastSourceMap(newSourceMap);
         // Add each reply to history so later questions have context
-        history.push({ role: "user", content: q });
-        history.push({ role: "assistant", content: res.data.answer });
+        history.push({ role: "user", content: q, sources: undefined });
+        history.push({ role: "assistant", content: res.data.answer, sources: res.data.sources });
       }
     } catch (err: any) {
       // Ignore aborted requests (user cleared the chat)
@@ -550,10 +596,10 @@ export default function App() {
     if (!file) return;
 
     // Client-side validation
-    const allowed = [".pdf", ".docx", ".txt"];
+    const allowed = [".pdf", ".docx", ".txt", ".xlsx"];
     const ext = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
     if (!allowed.includes(ext)) {
-      setUploadMsg("❌ Unsupported file type. Please upload a PDF, Word (.docx), or text (.txt) file.");
+      setUploadMsg("❌ Unsupported file type. Please upload a PDF, Word (.docx), text (.txt), or Excel (.xlsx) file.");
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
@@ -628,7 +674,7 @@ export default function App() {
             </div>
             <div>
               <h1 style={{ fontSize: '22px', lineHeight: 1.1 }} className="font-bold">
-                <span className="text-white">Docu</span>
+                <span className="text-white">Flin</span>
                 <span style={{ color: '#52B788' }}>Mind</span>
               </h1>
               <p style={{ fontSize: '11px', color: '#95D5B2' }}>Building Intelligence Platform</p>
@@ -690,7 +736,7 @@ export default function App() {
           <p className="text-green-300 text-xs font-semibold uppercase tracking-wider mb-3">
             Upload Document
           </p>
-          <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt" onChange={handleUpload} className="hidden" />
+          <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleUpload} className="hidden" />
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
@@ -698,7 +744,7 @@ export default function App() {
           >
             {uploading ? "Ingesting..." : "📤 Upload Document"}
           </button>
-          <p className="text-green-500 text-xs mt-1 text-center">PDF, Word, or TXT · Max 20 MB</p>
+          <p className="text-green-500 text-xs mt-1 text-center">PDF, Word, TXT, or Excel · Max 20 MB</p>
           {uploadMsg && (
             <p className="text-xs mt-2 text-green-200 leading-snug">{uploadMsg}</p>
           )}
@@ -780,7 +826,7 @@ export default function App() {
 
         {/* Top bar */}
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between shrink-0 bg-white">
-          <span className="text-gray-700 font-semibold" style={{ fontSize: '14px' }}>DocuMind</span>
+          <span className="text-gray-700 font-semibold" style={{ fontSize: '14px' }}>FlinMind</span>
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
             <span className="text-green-600 text-xs font-medium">Live</span>
@@ -792,7 +838,7 @@ export default function App() {
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center">
               <h2 style={{ fontSize: '40px', lineHeight: 1.1 }} className="font-bold mb-2">
-                <span style={{ color: '#1B4332' }}>Docu</span>
+                <span style={{ color: '#1B4332' }}>Flin</span>
                 <span style={{ color: '#52B788' }}>Mind</span>
               </h2>
               <p className="text-gray-400 mb-4" style={{ fontSize: '14px' }}>Building Intelligence Platform</p>
@@ -817,7 +863,7 @@ export default function App() {
             );
           })}
 
-          {loading && (
+          {(loading || formattingSource) && (
             <div className="flex justify-start mb-6">
               <div className="max-w-3xl w-full">
                 <div className="flex items-center gap-2 mb-2">
@@ -837,14 +883,14 @@ export default function App() {
                     <line x1="26" y1="37" x2="32" y2="46" stroke="#52B788" strokeWidth="0.8" strokeDasharray="2,2"/>
                     <line x1="32" y1="46" x2="22" y2="55" stroke="#52B788" strokeWidth="0.8" strokeDasharray="2,2"/>
                   </svg>
-                  <span className="text-green-700 text-xs font-semibold uppercase tracking-wider">DocuMind</span>
+                  <span className="text-green-700 text-xs font-semibold uppercase tracking-wider">FlinMind</span>
                 </div>
                 <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-5 py-4 shadow-sm">
                   <div className="flex gap-1.5 items-center">
                     <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }}></div>
                     <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }}></div>
                     <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }}></div>
-                    <span className="text-gray-400 text-xs ml-2">Searching documents...</span>
+                    <span className="text-gray-400 text-xs ml-2">{formattingSource ? "Formatting source..." : "Searching documents..."}</span>
                   </div>
                 </div>
               </div>
@@ -868,8 +914,8 @@ export default function App() {
                   sendQuery(input);
                 }
               }}
-              disabled={loading}
-              placeholder={loading ? "Please wait..." : "Ask about roofing specs, building codes, glazing standards, or safety..."}
+              disabled={loading || formattingSource}
+              placeholder={loading || formattingSource ? "Please wait..." : "Ask about roofing specs, building codes, glazing standards, or safety..."}
               rows={1}
               className="flex-1 bg-transparent text-gray-900 text-sm py-1 resize-none outline-none placeholder-gray-400 disabled:cursor-not-allowed"
             />
@@ -877,7 +923,7 @@ export default function App() {
             {/* Mic button */}
             <button
               onClick={toggleVoice}
-              disabled={loading}
+              disabled={loading || formattingSource}
               title={listening ? "Stop listening" : "Speak your question"}
               className={`p-1.5 rounded-lg transition-colors shrink-0 cursor-pointer ${
                 listening
@@ -893,7 +939,7 @@ export default function App() {
             {/* Send button */}
             <button
               onClick={() => sendQuery(input)}
-              disabled={loading || !input.trim()}
+              disabled={loading || formattingSource || !input.trim()}
               className="bg-green-700 hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-1.5 rounded-lg transition-colors shrink-0 text-sm font-medium cursor-pointer"
             >
               Send

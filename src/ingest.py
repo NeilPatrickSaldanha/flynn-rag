@@ -6,6 +6,7 @@ from openai import OpenAI
 from supabase import create_client
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from docx import Document as DocxDocument
+import openpyxl
 
 # ── Load environment variables from .env ──────────────────────────────────────
 load_dotenv()
@@ -19,7 +20,7 @@ DOCS_PATH = Path(DOCS_DIR)
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 EMBEDDING_MODEL = "text-embedding-3-small"
-SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt"}
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".xlsx"}
 PARAGRAPHS_PER_PAGE = 30   # virtual page size for Word docs
 CHARS_PER_PAGE = 2000      # virtual page size for plain text
 
@@ -43,10 +44,13 @@ def check_prompt_injection(pages: list[dict]) -> bool:
     return any(pattern in all_text for pattern in INJECTION_PATTERNS)
 
 
-def check_relevance(pages: list[dict]) -> bool:
+def check_relevance(pages: list[dict], ext: str = "") -> bool:
     """Return True if the document is relevant to the construction knowledge base."""
-    # Sample up to the first 1500 chars to keep the check fast and cheap
-    sample = " ".join(p["text"] for p in pages)[:1500]
+    # Sample up to the first 1500 chars to keep the check fast and cheap.
+    # .xlsx files front-load column headers before any data rows, so give
+    # them a larger sample to reach content that actually shows relevance.
+    sample_size = 3000 if ext == ".xlsx" else 1500
+    sample = " ".join(p["text"] for p in pages)[:sample_size]
 
     response = openai_client.chat.completions.create(
         model="gpt-4o-mini",
@@ -57,6 +61,9 @@ def check_relevance(pages: list[dict]) -> bool:
                     "You are a document relevance classifier for a construction industry knowledge base "
                     "that covers commercial roofing, glazing, curtain walls, building envelope systems, "
                     "building codes, site safety, and related technical specifications.\n\n"
+                    "Construction-related terms include things like: \"MPa\", \"f'c\", \"slump\", "
+                    "\"mix design\", \"W/CM\", \"concrete\", \"aggregate\", \"CSA\", \"ASTM\", "
+                    "\"compressive strength\", \"QC\", \"pour\", \"batch\".\n\n"
                     "Respond with ONLY 'yes' if the document is relevant to any of those topics, "
                     "or 'no' if it is not (e.g. invoices, personal documents, unrelated business docs)."
                 )
@@ -107,9 +114,31 @@ def extract_text_from_docx(docx_path: Path) -> list[dict]:
 
 
 # ── Extract text from a plain text file ───────────────────────────────────────
+def clean_text(text: str) -> str:
+    """Clean raw text by removing decorative separators and collapsing blank lines."""
+    lines = text.split("\n")
+    cleaned_lines = []
+    
+    for line in lines:
+        stripped = line.strip()
+        # Remove lines that consist only of dashes, equals signs, or whitespace
+        if stripped and set(stripped).issubset(set("-= ")):
+            continue
+        cleaned_lines.append(line)
+    
+    # Join and then collapse multiple consecutive blank lines into one
+    text = "\n".join(cleaned_lines)
+    # Replace 2 or more consecutive newlines with a single newline
+    import re
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text
+
+
 def extract_text_from_txt(txt_path: Path) -> list[dict]:
     """Extract text from a .txt file. Splits into virtual pages by character count."""
     text = txt_path.read_text(encoding="utf-8", errors="ignore")
+    # Preprocess: clean the raw text before chunking
+    text = clean_text(text)
     pages = []
     for i in range(0, len(text), CHARS_PER_PAGE):
         chunk = text[i: i + CHARS_PER_PAGE].strip()
@@ -118,15 +147,37 @@ def extract_text_from_txt(txt_path: Path) -> list[dict]:
     return pages
 
 
+# ── Extract text from an Excel workbook ───────────────────────────────────────
+def extract_text_from_xlsx(file_path: Path) -> list[dict]:
+    """Extract text from an .xlsx file. Returns one entry per sheet."""
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    pages = []
+    for sheet_index, sheet_name in enumerate(wb.sheetnames, start=1):
+        ws = wb[sheet_name]
+        lines = [f"Sheet: {sheet_name}"]
+        for row in ws.iter_rows(values_only=True):
+            if all(cell is None for cell in row):
+                continue
+            lines.append("\t".join("" if cell is None else str(cell) for cell in row))
+        text = "\n".join(lines)
+        if text.strip():
+            pages.append({"page": sheet_index, "text": text})
+    return pages
+
+
 # ── Dispatch extractor by file type ───────────────────────────────────────────
-def extract_text(file_path: Path) -> list[dict]:
-    ext = Path(file_path).suffix.lower()
+def extract_text(file_path) -> list[dict]:
+    # Ensure file_path is a Path object (convert from string if needed)
+    file_path = Path(file_path)
+    ext = file_path.suffix.lower()
     if ext == ".pdf":
         return extract_text_from_pdf(file_path)
     elif ext == ".docx":
         return extract_text_from_docx(file_path)
     elif ext == ".txt":
         return extract_text_from_txt(file_path)
+    elif ext == ".xlsx":
+        return extract_text_from_xlsx(file_path)
     return []
 
 
@@ -310,7 +361,7 @@ def ingest_single_file(file_path: str, filename: str, tenant_id: str = "default"
         os.remove(path)
         return False, "This document was rejected because it contains content that is not allowed."
 
-    if not check_relevance(pages):
+    if not check_relevance(pages, ext=path.suffix.lower()):
         os.remove(path)
         return False, "This document does not appear to be relevant to the construction knowledge base. Only roofing, glazing, building codes, safety, and related technical documents are accepted."
 

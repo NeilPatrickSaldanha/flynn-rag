@@ -15,7 +15,7 @@ supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Flynn DocuMind",
+    page_title="Flynn FlinMind",
     page_icon="🏗️",
     layout="wide"
 )
@@ -33,7 +33,7 @@ button, [data-testid="baseButton-secondary"], [data-testid="baseButton-primary"]
 """, unsafe_allow_html=True)
 
 # ── Header ─────────────────────────────────────────────────────────────────────
-st.title("🏗️ Flynn DocuMind")
+st.title("🏗️ Flynn FlinMind")
 st.caption("Ask questions about roofing specs, building codes, glazing standards, and safety manuals.")
 st.divider()
 
@@ -256,7 +256,7 @@ def render_sources(sources: list[dict]):
 
 # ── Helper: share buttons ──────────────────────────────────────────────────────
 def render_share_buttons(question: str, answer: str):
-    share_text = f"Q: {question}\n\nA: {answer}\n\nPowered by Flynn DocuMind"
+    share_text = f"Q: {question}\n\nA: {answer}\n\nPowered by Flynn FlinMind"
     encoded = share_text.replace("\n", "%0A").replace(" ", "%20")
 
     whatsapp_url = f"https://wa.me/?text={encoded}"
