@@ -101,21 +101,14 @@ class FormatSourceRequest(BaseModel):
 @app.post("/format-source")
 async def format_source(request: FormatSourceRequest):
     """Format a raw document excerpt using OpenAI."""
-    from generate import openai_client
+    from llm import chat
 
     system_prompt = """You are a helpful assistant. Format the following raw construction document excerpt into clean, readable markdown. If it contains table data, format it as a proper markdown table with | separators. If it contains a list, format it as bullet points. Preserve all technical values exactly. Do not add or remove any information."""
 
-    response = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Format this excerpt:\n\n{request.content}"}
-        ],
-        temperature=0,
-        max_tokens=500
-    )
-
-    formatted = response.choices[0].message.content
+    formatted = await run_in_threadpool(chat, [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Format this excerpt:\n\n{request.content}"},
+    ])
     return {"formatted": formatted}
 
 
@@ -205,6 +198,47 @@ EXPECTED_MIME: dict[str, str] = {
     ".txt":  "text/plain",
 }
 
+ACCEPTED_MIME: dict[str, set] = {
+    ".pdf":  {"application/pdf", "application/x-pdf"},
+    ".docx": {EXPECTED_MIME[".docx"], "application/msword", "application/zip", "application/x-zip-compressed"},
+    ".xlsx": {EXPECTED_MIME[".xlsx"], "application/vnd.ms-excel", "application/zip", "application/x-zip-compressed"},
+    ".txt":  {"text/plain", "text/markdown", "text/csv"},
+}
+GENERIC_MIME = {"application/octet-stream", "binary/octet-stream"}
+
+# A .docx / .xlsx is a ZIP archive that must contain this part
+OFFICE_PART = {".docx": "word/document.xml", ".xlsx": "xl/workbook.xml"}
+
+
+def content_matches_extension(content: bytes, ext: str) -> bool:
+    """Validate the actual bytes, not the client-declared type."""
+    import io
+    import zipfile
+    if ext == ".pdf":
+        return content.startswith(MAGIC_BYTES[".pdf"])
+    if ext in OFFICE_PART:
+        if not content.startswith(MAGIC_BYTES[ext]):
+            return False
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as z:
+                return OFFICE_PART[ext] in z.namelist()
+        except zipfile.BadZipFile:
+            return False
+    if ext == ".txt":
+        if b"\x00" in content[:8192]:
+            return False
+        try:
+            content.decode("utf-8")
+            return True
+        except UnicodeDecodeError:
+            try:
+                content.decode("cp1252")
+                return True
+            except UnicodeDecodeError:
+                return False
+    return False
+
+
 CORS_HEADERS = {"Access-Control-Allow-Origin": "*"}
 
 @app.post("/upload")
@@ -220,7 +254,7 @@ async def upload_document(
 
     # 1. Extension check
     if ext not in SUPPORTED_EXTENSIONS:
-        return err(400, "Unsupported file type. Only PDF, Word (.docx), and plain text (.txt) files are allowed.")
+        return err(400, "Unsupported file type. Only PDF, Word (.docx), Excel (.xlsx), and plain text (.txt) files are allowed.")
 
     # 2. Read into memory so we can validate before saving
     content = await file.read()
@@ -229,15 +263,15 @@ async def upload_document(
     if len(content) > MAX_FILE_SIZE_BYTES:
         return err(400, "File too large. Maximum allowed size is 20MB.")
 
-    # 4. MIME type check — compare declared content_type against expected for this extension
+    # 4. Declared MIME type — browsers disagree on Office types (e.g. Windows sends
+    # application/vnd.ms-excel for .xlsx, curl sends octet-stream), so only reject
+    # a declared type that is clearly something else (an image, video, executable…).
     declared_mime = (file.content_type or "").split(";")[0].strip().lower()
-    expected_mime = EXPECTED_MIME[ext]
-    if declared_mime and declared_mime != expected_mime:
+    if declared_mime and declared_mime not in ACCEPTED_MIME[ext] | GENERIC_MIME:
         return err(400, "File type mismatch. The file contents do not match the file extension.")
 
-    # 5. Magic bytes check (belt-and-suspenders for PDF and DOCX)
-    expected_magic = MAGIC_BYTES.get(ext, b"")
-    if expected_magic and not content.startswith(expected_magic):
+    # 5. Content check — the bytes must really be this kind of file
+    if not content_matches_extension(content, ext):
         return err(400, "File type mismatch. The file contents do not match the file extension.")
 
     # 5. Duplicate check — return 409 if file exists and force_new_version is false

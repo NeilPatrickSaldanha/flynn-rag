@@ -1,10 +1,5 @@
-import os
 import re
-from dotenv import load_dotenv
-from openai import OpenAI
-
-load_dotenv()
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+from llm import chat
 
 
 # ── Query preprocessing ────────────────────────────────────────────────────────
@@ -69,6 +64,7 @@ Your job is to do THREE things:
 2. EXTRACT any formatting or style instructions the user has given about HOW they want the answer delivered. These are phrases like "answer in one word", "in one sentence", "briefly", "no explanation", "with detailed explanation", "in bullet points", "step by step", "explain in detail", "I NEED MORE EXPLANATION", "keep it short", etc. Also detect the tone — if the user is frustrated or emphasizing (e.g. ALL CAPS), acknowledge that in the instruction. Return the extracted instruction as a clear directive. If no formatting instruction is found, return an empty string.
 
 3. REWRITE the query for document retrieval — expand abbreviations, add domain context, and REMOVE any formatting instructions from the rewritten query (those go in format_instruction, not here).
+IMPORTANT: Keep record IDs, item codes, tags and part numbers exactly as written (e.g. "FP-006", "INS-009", "P-004", "C35-20-300") and do NOT guess what their letters stand for — never expand them into words.
 IMPORTANT: If the user references a specific document by name or number (e.g. "doc5", "doc 5", "document 2", "the safety manual", "the TPO datasheet"), preserve that reference exactly as-is in the rewritten query.
 IMPORTANT: If the query references a specific city, region, or location (e.g. "a building in Winnipeg"), the documents will use technical/regulatory terms, not place names. Use your knowledge of that location to add the relevant terms to the rewritten query — climate zone, seismic design category, wind or snow load region, building code jurisdiction, etc. Keep the original location name in the rewritten query too; add the technical terms alongside it, don't replace it.
 
@@ -100,17 +96,15 @@ Rules for requires_multiple_docs:
 - conversational: false
 - source_reference: false"""
 
-    response = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": cleaned}
-        ],
-        temperature=0
-    )
-
     import json
-    result = json.loads(response.choices[0].message.content)
+    result = json.loads(chat([
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": cleaned},
+    ], json_mode=True))
+    result.setdefault("type", "lookup")
+    result.setdefault("rewritten_query", cleaned)
+    result.setdefault("format_instruction", "")
+    result["top_k"] = int(result.get("top_k") or 3)
 
     # Detect version intent from the cleaned query
     result["version_intent"] = detect_version_intent(cleaned)

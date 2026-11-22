@@ -2,18 +2,16 @@ import os
 import sys
 import json
 import traceback
-from dotenv import load_dotenv
-from openai import OpenAI
+import re
 from retrieve import hybrid_search
 from query_understanding import classify_query
+from llm import chat
+from ingest import chunk_header
 
 # Force unbuffered stdout so prints from threadpool show immediately on Windows
 sys.stdout.reconfigure(line_buffering=True)
 
-print("[STARTUP] generate.py v2 loaded — dual-query rerank, filename score floor")
-
-load_dotenv()
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+print("[STARTUP] generate.py v3 loaded — section-aware context, conflict-aware answers")
 
 # ── Step 1: Rewrite query using conversation history ──────────────────────────
 def rewrite_query_with_history(query: str, history: list[dict]) -> str:
@@ -48,62 +46,63 @@ drop or paraphrase the user's formatting/length request.
 
 Return ONLY the rewritten question. No explanation, no preamble."""
 
-    response = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Conversation history:\n{history_text}\n\nFollow-up question: {query}"}
-        ],
-        temperature=0
-    )
-
-    return response.choices[0].message.content.strip()
+    return chat([
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Conversation history:\n{history_text}\n\nFollow-up question: {query}"},
+    ])
 
 
 # ── Step 2: Rerank chunks by relevance ────────────────────────────────────────
+MIN_RELEVANCE = 0.2
+
+
 def rerank_chunks(chunks: list[dict], query: str, per_doc_cap: int = 3) -> list[dict]:
+    """Score every candidate with the fast model, drop irrelevant ones and keep
+    at most `per_doc_cap` chunks per document. Each chunk is shown with its
+    document/section header so short table fragments are judged in context."""
     if not chunks:
         return []
 
-    system_prompt = """You are a relevance scoring system.
-Score each chunk from 0.0 to 1.0 based on how directly it answers the query.
-0.0 = completely irrelevant
-0.5 = tangentially related
-1.0 = directly answers the query
+    system_prompt = """You are a relevance scoring system for construction documents.
+Score each chunk from 0.0 to 1.0 for how directly it helps answer the query.
+0.0 = irrelevant · 0.5 = related topic but does not contain the answer · 1.0 = contains the answer
+A chunk that states a value for a DIFFERENT item, system or context than the one asked about
+(e.g. crane lifts when the question is about hoisting curtain wall panels) scores at most 0.4.
+Respond ONLY with JSON: {"scores": [..one number per chunk, in order..]}"""
 
-Respond ONLY with a JSON array of scores in the same order as the chunks.
-Example: [0.9, 0.3, 0.7, 0.1, 0.8]
-No other text."""
-
-    chunks_text = "\n\n".join([
-        f"Chunk {i+1}:\n{chunk['content']}"
-        for i, chunk in enumerate(chunks)
-    ])
-
-    response = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Query: {query}\n\nChunks:\n{chunks_text}"}
-        ],
-        temperature=0
+    chunks_text = "\n\n".join(
+        f"Chunk {i+1}: {chunk_header(c['metadata'])}\n{c['content'][:4000]}"
+        for i, c in enumerate(chunks)
     )
-
-    scores = json.loads(response.choices[0].message.content)
+    raw = chat([
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"User question: {query}\n\nChunks:\n{chunks_text}"},
+    ], json_mode=True)
+    try:
+        parsed = json.loads(raw)
+        scores = parsed.get("scores", []) if isinstance(parsed, dict) else parsed
+        scores = [float(x) for x in scores]
+    except (ValueError, TypeError):
+        print(f"  [RERANK] could not parse scores: {raw[:200]!r} — keeping retrieval order")
+        scores = [max(0.3, 1.0 - i * 0.05) for i in range(len(chunks))]
 
     for i, chunk in enumerate(chunks):
         chunk["relevance_score"] = scores[i] if i < len(scores) else 0.0
 
-    # Filename-matched chunks were explicitly requested by the user — give them
-    # a minimum score so they rank meaningfully, not at 0.0
+    # Chunks from a document the user explicitly named keep a floor score, and
+    # so do chunks that contain an exact record ID / code from the question
+    # (e.g. "FP-006", "INS-009", "C35-20-300").
+    ids = {t for t in re.findall(r"[A-Za-z]+[-:]?\d[\w-]*|\d+[-:]\d+[\w-]*", query) if len(t) >= 3}
     for c in chunks:
-        if c.get("source") == "filename" and c["relevance_score"] < 0.5:
-            c["relevance_score"] = 0.5
+        floor = 0.5 if c.get("source") == "filename" else 0.0
+        if ids and any(re.search(rf"(?<![\w-]){re.escape(t)}(?![\w-])", c["content"], re.I) for t in ids):
+            floor = max(floor, 0.6)
+        if c["relevance_score"] < floor:
+            c["relevance_score"] = floor
 
     ranked = sorted(chunks, key=lambda x: x["relevance_score"], reverse=True)
-    filtered = [c for c in ranked if c["relevance_score"] >= 0.10 or c.get("source") == "filename"]
+    filtered = [c for c in ranked if c["relevance_score"] >= MIN_RELEVANCE]
 
-    # Cap to top 3 chunks per unique document filename
     per_file_count: dict[str, int] = {}
     capped = []
     for c in filtered:
@@ -111,24 +110,22 @@ No other text."""
         per_file_count[fname] = per_file_count.get(fname, 0) + 1
         if per_file_count[fname] <= per_doc_cap:
             capped.append(c)
-    filtered = sorted(capped, key=lambda x: x["relevance_score"], reverse=True)
-
-    return filtered
+    return capped
 
 
 # ── Step 3: Assemble context from chunks ──────────────────────────────────────
 def assemble_context(chunks: list[dict]) -> str:
-    context_parts = []
-
+    parts = []
     for i, chunk in enumerate(chunks, 1):
-        filename = chunk["metadata"]["filename"]
-        page = chunk["metadata"]["page"]
-        content = chunk["content"]
-        context_parts.append(
-            f"[Source {i}: {filename}, Page {page}]\n{content}"
-        )
-
-    return "\n\n---\n\n".join(context_parts)
+        meta = chunk["metadata"]
+        version = chunk.get("version", 1)
+        label = f"[Source {i}: {meta['filename']}, Page {meta['page']}"
+        if version and version > 1 or not chunk.get("is_latest", True):
+            label += f", version {version}{'' if chunk.get('is_latest', True) else ' (OLDER VERSION)'}"
+        label += "]"
+        section = meta.get("section")
+        parts.append(f"{label}\n{('Section: ' + section + chr(10)) if section else ''}{chunk['content']}")
+    return "\n\n---\n\n".join(parts)
 
 
 # ── Step 4: Generate answer ────────────────────────────────────────────────────
@@ -177,6 +174,22 @@ IMPORTANT — follow these fallback rules in strict priority order:
 3. ONLY if the user is genuinely asking to see their document library (e.g. "what documents are uploaded", "how many documents do I have", "list my documents") — NOT for questions about your own configuration or instructions — respond with: "I can only help with answering questions about construction topics. To see your uploaded documents, check the sidebar on the left."
 4. Never fabricate information. If the sources don't fully cover something, say so — do not guess.
 
+ACCURACY RULES (always apply):
+- Attribute values precisely. Only state a value for the exact item, system, product variant or
+  condition the source ties it to. Never carry a value from one item over to another (e.g. do not
+  give a mechanically-attached rating for a ballasted system, or a crane-lift limit for panel
+  hoisting). If the sources give no value for the exact thing asked, say that plainly.
+- Conflicting sources: if two or more sources give DIFFERENT values for the same requirement,
+  do not pick one silently and do not blend them into a range. List each value with its source
+  document name and citation, then add a short "⚠️ Conflict" note saying the documents disagree
+  and that the project specification or engineer of record should confirm which governs.
+- Tables and logs: read every row given. When a source states a summary figure (totals, pass
+  rate, counts), use it rather than recomputing. If you count rows yourself, count only rows that
+  are actually shown and say what you counted. Respect exact thresholds (e.g. ">35" means 35 does
+  not meet it) and point out when a record's recorded result disagrees with the stated criterion.
+- Older versions: a source marked OLDER VERSION is superseded; only use it if the user asked
+  about a previous version, and say so when you do.
+
 {style_block}"""
 
     # Build messages with history
@@ -206,13 +219,10 @@ IMPORTANT — follow these fallback rules in strict priority order:
         "content": f"Question: {query}\n\nSources:\n{framed_context}"
     })
 
-    response = openai_client.chat.completions.create(
-        model="gpt-4o",
-        messages=messages,
-        temperature=0
-    )
+    return chat(messages, answer=True)
 
-    return response.choices[0].message.content
+
+EXPLICIT_FILE_REF = re.compile(r"\.(pdf|docx|txt|xlsx)\b|\bdoc(?:ument)?\s*#?\d+\b", re.I)
 
 
 def _scope_to_document(chunks: list[dict], target_filename: str, filename_match_specific: bool) -> tuple:
@@ -253,18 +263,14 @@ Identify which numbered question the follow-up refers to.
 - If the follow-up describes a specific topic (e.g. "the fall protection requirements question", "the one about EPDM"), return the number of the question that best matches that description.
 
 Respond with ONLY the number, no other text."""
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Previous questions:\n{numbered}\n\nFollow-up: {query}"}
-            ],
-            temperature=0
-        )
+        reply = chat([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Previous questions:\n{numbered}\n\nFollow-up: {query}"},
+        ])
         try:
-            n = int(response.choices[0].message.content.strip())
+            n = int(re.search(r"\d+", reply).group())
             idx, _ = user_turns[n - 1] if 1 <= n <= len(user_turns) else user_turns[-1]
-        except (ValueError, IndexError):
+        except (ValueError, IndexError, AttributeError):
             idx, _ = user_turns[-1]
 
     # The answer to that user turn is the next assistant message after it.
@@ -337,6 +343,12 @@ def _answer_query_inner(query: str, history: list[dict], tenant_id: str) -> dict
     # PAST answer, not a new document question. The referenced turn may be
     # the most recent one, or an earlier one named by topic (e.g. "the fall
     # protection question") — find_referenced_turn_sources resolves which.
+    # With no earlier turns there is no previous answer to ask about — treat a
+    # "source_reference" classification as a normal document question.
+    if query_type == "source_reference" and not any(m.get("role") == "user" for m in history):
+        print("  [PIPE] source_reference with empty history — treating as lookup")
+        query_type, top_k = "lookup", max(top_k, 3)
+
     if query_type == "source_reference":
         print("  [PIPE] source_reference query — resolving which past turn is referenced")
         # Use preprocessed_query (the user's actual wording, before the
@@ -375,8 +387,17 @@ def _answer_query_inner(query: str, history: list[dict], tenant_id: str) -> dict
 
     document_specific = query_info.get("document_specific", False)
     if document_specific:
-        chunks, not_found = _scope_to_document(chunks, target_filename, filename_match_specific)
-        if not_found:
+        scoped, not_found = _scope_to_document(chunks, target_filename, filename_match_specific)
+        # The classifier sometimes marks record IDs ("INS-009", "P-004") as a
+        # document name. Only refuse when the user really named a file
+        # ("doc1_….pdf", "document 3"); otherwise answer from all documents.
+        names_a_file = bool(EXPLICIT_FILE_REF.search(clean_query))
+        if not_found and not names_a_file:
+            print("  [PIPE] document-specific flag but no file named — searching all documents")
+            document_specific = False
+        else:
+            chunks = scoped
+        if document_specific and not_found:
             print("  [PIPE] document-specific query — no confident document match, not substituting other sources")
             return {
                 "query": query,
@@ -387,7 +408,8 @@ def _answer_query_inner(query: str, history: list[dict], tenant_id: str) -> dict
                 ),
                 "sources": [],
             }
-        print(f"  [PIPE] document-specific query — scoped to matched doc(s): {len(chunks)} chunks")
+        if document_specific:
+            print(f"  [PIPE] document-specific query — scoped to matched doc(s): {len(chunks)} chunks")
 
     # Hard cap before reranker — LLM scoring every chunk is the bottleneck.
     # Interleave across (source, filename) pairs — not just source — so an
@@ -399,8 +421,13 @@ def _answer_query_inner(query: str, history: list[dict], tenant_id: str) -> dict
     # and without per-file fairness, whichever doc happened to match first
     # fills the whole cap and starves out the document the user actually
     # asked about by name.
-    RERANK_CAP = 15
-    if len(chunks) > RERANK_CAP:
+    RERANK_CAP = 20
+    if len(chunks) > RERANK_CAP and not filename_match_specific:
+        # Candidates are already in relevance order (fused semantic+keyword) —
+        # keep the best ones. Round-robin by DB order would drop the best chunk.
+        chunks = chunks[:RERANK_CAP]
+        print(f"  [PIPE] capped to top {RERANK_CAP} fused-rank chunks before reranking")
+    elif len(chunks) > RERANK_CAP:
         by_group: dict[tuple, list] = {}
         for c in chunks:
             key = (c.get("source", "other"), c["metadata"].get("filename", ""))
@@ -417,9 +444,9 @@ def _answer_query_inner(query: str, history: list[dict], tenant_id: str) -> dict
 
     # Rerank — use clean_query (not raw query) so format instructions don't
     # pollute relevance scoring; include rewritten query for expanded context
-    rerank_query = f"{clean_query} | {rewritten}" if clean_query != rewritten else rewritten
+    rerank_query = clean_query if clean_query == rewritten else f"{clean_query}\n(search expansion, may contain wrong guesses: {rewritten})"
     print(f"  [PIPE] reranking with: '{rerank_query}'")
-    per_doc_cap = {"lookup": 1, "comparison": 3, "summarization": 5, "reasoning": 3, "conversational": 0}.get(query_type, 2)
+    per_doc_cap = {"lookup": 2, "comparison": 3, "summarization": 5, "reasoning": 3, "conversational": 0}.get(query_type, 2)
 
     # Single-doc summarization: keep ALL chunks — the user wants the full document
     unique_files = {c["metadata"]["filename"] for c in chunks}
@@ -447,8 +474,10 @@ def _answer_query_inner(query: str, history: list[dict], tenant_id: str) -> dict
                 chunks, search_result["target_filename"], search_result.get("filename_match_specific", False))
             if not_found:
                 chunks = []
-        rerank_query = f"{clean_query} | {rewritten}" if clean_query != rewritten else rewritten
+        rerank_query = clean_query if clean_query == rewritten else f"{clean_query}\n(search expansion, may contain wrong guesses: {rewritten})"
         ranked_chunks = rerank_chunks(chunks, rerank_query, per_doc_cap)
+        # Superseded content is only worth surfacing when it clearly answers the question
+        ranked_chunks = [c for c in ranked_chunks if c.get("relevance_score", 0) >= 0.6]
         used_fallback = bool(ranked_chunks)
         print(f"  [PIPE] fallback rerank: {len(ranked_chunks)} chunks kept")
 

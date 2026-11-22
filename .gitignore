@@ -12,3 +12,7 @@ __pycache__/
 
 # Streamlit
 .streamlit/
+
+# Local re-index backups (contain document text + embeddings)
+backups/
+

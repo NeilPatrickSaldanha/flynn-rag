@@ -3,7 +3,11 @@ import axios from "axios";
 import ReactMarkdown from "react-markdown";
 
 
-const API = "http://localhost:8000";
+// VITE_API_URL wins when set; otherwise use the local backend when the app is
+// opened from localhost, and the Render backend everywhere else.
+const RENDER_API = "https://flynn-rag.onrender.com";
+const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+const API: string = import.meta.env.VITE_API_URL || (isLocal ? "http://localhost:8000" : RENDER_API);
 
 interface Source {
   filename: string;
