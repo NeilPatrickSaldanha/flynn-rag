@@ -88,6 +88,30 @@ async def generic_exception_handler(request: Request, exc: Exception):
     )
 
 
+# ── Upload filename safety ─────────────────────────────────────────────────────
+DOCS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
+
+
+def safe_upload_name(name: Optional[str]) -> Optional[str]:
+    """Reduce a client-supplied filename to a bare base name. Backslashes are
+    treated as path separators too (Windows clients), so "..\\x.pdf" and
+    "../x.pdf" both become "x.pdf". Returns None for names that are empty or
+    become empty ("", "..", "dir/", NUL bytes)."""
+    if not name or "\x00" in name:
+        return None
+    base = os.path.basename(name.replace("\\", "/")).strip()
+    if base in ("", ".", ".."):
+        return None
+    return base
+
+
+def path_inside_docs(name: str) -> Optional[str]:
+    """Absolute path for `name` inside DOCS_DIR, or None if it would resolve elsewhere."""
+    root = os.path.realpath(DOCS_DIR)
+    target = os.path.realpath(os.path.join(root, name))
+    return target if os.path.commonpath([root, target]) == root else None
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 @app.get("/")
 def health_check():
@@ -165,19 +189,22 @@ def list_documents(x_tenant_id: Annotated[str, Header()] = "default"):
 
 @app.delete("/documents/{filename}")
 def delete_document(filename: str, x_tenant_id: Annotated[str, Header()] = "default"):
+    safe_name = safe_upload_name(filename)
+    local_path = path_inside_docs(safe_name) if safe_name else None
+    if not local_path:
+        return JSONResponse({"detail": "Invalid filename."}, status_code=400,
+                            headers={"Access-Control-Allow-Origin": "*"})
     supabase.table("documents").delete() \
-        .eq("metadata->>filename", filename) \
+        .eq("metadata->>filename", safe_name) \
         .eq("tenant_id", x_tenant_id) \
         .execute()
     supabase.table("document_registry").delete() \
-        .eq("filename", filename) \
+        .eq("filename", safe_name) \
         .eq("tenant_id", x_tenant_id) \
         .execute()
-    docs_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
-    local_path = os.path.join(docs_dir, filename)
-    if os.path.exists(local_path):
+    if os.path.isfile(local_path):
         os.remove(local_path)
-    return {"message": f"Deleted {filename}"}
+    return {"message": f"Deleted {safe_name}"}
 
 
 MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
@@ -250,7 +277,12 @@ async def upload_document(
     def err(status: int, detail: str):
         return JSONResponse({"detail": detail}, status_code=status, headers=CORS_HEADERS)
 
-    ext = os.path.splitext(file.filename.lower())[1]
+    # 0. Filename safety — never trust the client-supplied name as a path
+    safe_name = safe_upload_name(file.filename)
+    if not safe_name:
+        return err(400, "Invalid filename.")
+
+    ext = os.path.splitext(safe_name.lower())[1]
 
     # 1. Extension check
     if ext not in SUPPORTED_EXTENSIONS:
@@ -276,12 +308,12 @@ async def upload_document(
 
     # 5. Duplicate check — return 409 if file exists and force_new_version is false
     if not force_new_version:
-        existing = get_existing_versions(file.filename, x_tenant_id)
+        existing = get_existing_versions(safe_name, x_tenant_id)
         if existing:
             return JSONResponse(
                 {
                     "status": "duplicate",
-                    "message": f"{file.filename} already exists",
+                    "message": f"{safe_name} already exists",
                     "existing_versions": existing,
                 },
                 status_code=409,
@@ -289,10 +321,11 @@ async def upload_document(
             )
 
     # 6. Save to disk and ingest
-    DOCS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
+    save_path = path_inside_docs(safe_name)
+    if not save_path:
+        return err(400, "Invalid filename.")
     try:
         os.makedirs(DOCS_DIR, exist_ok=True)
-        save_path = os.path.join(DOCS_DIR, file.filename)
         with open(save_path, "wb") as f:
             f.write(content)
 
@@ -305,7 +338,7 @@ async def upload_document(
             return err(400, "Document rejected: potential prompt injection detected. Please upload construction-related documents only.")
 
         success, result = await run_in_threadpool(
-            ingest_single_file, save_path, file.filename, x_tenant_id,
+            ingest_single_file, save_path, safe_name, x_tenant_id,
             force_new_version=force_new_version,
         )
     except Exception as e:
@@ -317,6 +350,6 @@ async def upload_document(
         return err(400, result)
 
     return JSONResponse(
-        {"message": f"Successfully ingested {file.filename}", "chunks": result["chunks"], "version": result["version"]},
+        {"message": f"Successfully ingested {safe_name}", "chunks": result["chunks"], "version": result["version"]},
         headers=CORS_HEADERS,
     )
