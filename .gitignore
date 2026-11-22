@@ -16,3 +16,6 @@ __pycache__/
 # Local re-index backups (contain document text + embeddings)
 backups/
 
+
+# Claude Code local settings (machine-specific permission allowlist)
+.claude/settings.local.json
